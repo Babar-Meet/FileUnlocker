@@ -93,7 +93,11 @@ async function optimizeByType({ fileType, inputPath, outputPath, qpdfBin }) {
   }
 
   if (fileType.extension === ".docx" || fileType.extension === ".pptx") {
-    await normalizeOfficeDocument({ inputPath, outputPath });
+    await normalizeOfficeDocument({
+      inputPath,
+      outputPath,
+      extension: fileType.extension,
+    });
     return "Office document normalized and metadata removed.";
   }
 

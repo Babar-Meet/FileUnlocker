@@ -3,7 +3,11 @@ import JSZip from "jszip";
 import mammoth from "mammoth";
 import { AppError } from "../errors.js";
 import { SECURE_ENCRYPTION_MESSAGE } from "../constants.js";
-import { isOleCompoundBuffer, removeDocProps } from "../helpers/office.js";
+import {
+  isOleCompoundBuffer,
+  removeDocProps,
+  validateOfficePackage,
+} from "../helpers/office.js";
 
 function parseReason(error) {
   return error?.message || "Unknown Office processing error";
@@ -37,13 +41,27 @@ async function loadOfficeZip(inputPath) {
   }
 }
 
-async function writeOfficeZip(zip, outputPath) {
-  const outputBuffer = await zip.generateAsync({
-    type: "nodebuffer",
-    compression: "DEFLATE",
-    compressionOptions: { level: 9 },
-  });
-  await fs.writeFile(outputPath, outputBuffer);
+async function writeOfficeZip(zip, outputPath, extension) {
+  try {
+    await validateOfficePackage(zip, extension);
+  } catch (error) {
+    throw new AppError("File corrupted", "FILE_CORRUPTED", 400, {
+      reason: parseReason(error),
+    });
+  }
+
+  try {
+    const outputBuffer = await zip.generateAsync({
+      type: "nodebuffer",
+      compression: "DEFLATE",
+      compressionOptions: { level: 9 },
+    });
+    await fs.writeFile(outputPath, outputBuffer);
+  } catch (error) {
+    throw new AppError("Processing failed", "PROCESSING_FAILED", 500, {
+      reason: parseReason(error),
+    });
+  }
 }
 
 async function validateDocxReadable(inputPath) {
@@ -69,38 +87,47 @@ export async function unlockDocxRestrictions({ inputPath, outputPath }) {
     const settingsXml = await settingsFile.async("string");
     const updatedSettingsXml = settingsXml
       .replace(/<w:documentProtection[^>]*\/>/g, "")
-      .replace(/<w:writeProtection[^>]*\/>/g, "");
+      .replace(/<w:documentProtection[\s\S]*?<\/w:documentProtection>/g, "")
+      .replace(/<w:writeProtection[^>]*\/>/g, "")
+      .replace(/<w:writeProtection[\s\S]*?<\/w:writeProtection>/g, "");
 
     zip.file(settingsPath, updatedSettingsXml);
   }
 
-  removeDocProps(zip);
-  await writeOfficeZip(zip, outputPath);
+  await removeDocProps(zip);
+  await writeOfficeZip(zip, outputPath, ".docx");
 }
 
 export async function unlockPptxRestrictions({ inputPath, outputPath }) {
   const zip = await loadOfficeZip(inputPath);
 
-  const presentationPath = "ppt/presentation.xml";
-  const presentationFile = zip.file(presentationPath);
-  if (presentationFile) {
-    const presentationXml = await presentationFile.async("string");
-    const updatedPresentationXml = presentationXml
+  const pptXmlFiles = zip.file(/^ppt\/.*\.xml$/);
+
+  for (const pptXmlFile of pptXmlFiles) {
+    const xml = await pptXmlFile.async("string");
+    const updatedXml = xml
       .replace(/<p:modifyVerifier[^>]*\/>/g, "")
       .replace(/<p:modifyVerifier[\s\S]*?<\/p:modifyVerifier>/g, "")
-      .replace(/<p:writeProtection[^>]*\/>/g, "");
+      .replace(/<p:writeProtection[^>]*\/>/g, "")
+      .replace(/<p:writeProtection[\s\S]*?<\/p:writeProtection>/g, "");
 
-    zip.file(presentationPath, updatedPresentationXml);
+    if (updatedXml !== xml) {
+      zip.file(pptXmlFile.name, updatedXml);
+    }
   }
 
-  removeDocProps(zip);
-  await writeOfficeZip(zip, outputPath);
+  await removeDocProps(zip);
+  await writeOfficeZip(zip, outputPath, ".pptx");
 }
 
-export async function normalizeOfficeDocument({ inputPath, outputPath }) {
+export async function normalizeOfficeDocument({
+  inputPath,
+  outputPath,
+  extension,
+}) {
   const zip = await loadOfficeZip(inputPath);
-  removeDocProps(zip);
-  await writeOfficeZip(zip, outputPath);
+  await removeDocProps(zip);
+  await writeOfficeZip(zip, outputPath, extension);
 }
 
 export async function repairOfficeDocument({
@@ -113,6 +140,6 @@ export async function repairOfficeDocument({
   }
 
   const zip = await loadOfficeZip(inputPath);
-  removeDocProps(zip);
-  await writeOfficeZip(zip, outputPath);
+  await removeDocProps(zip);
+  await writeOfficeZip(zip, outputPath, extension);
 }

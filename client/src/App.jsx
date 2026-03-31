@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import {
+  CircleHelp,
   CheckCircle2,
   Download,
   FileArchive,
@@ -43,6 +44,18 @@ const OPERATIONS = [
     help: "Best-effort re-save for partially corrupted files",
   },
 ];
+
+const OPERATION_DETAILS = {
+  auto: "Auto detects the file type and picks the safest processor. PDF uses qpdf, Office files use OOXML-safe normalization, and images use sharp.",
+  unlock:
+    "Unlock removes restrictions only. It can remove print/edit/copy limits, but it does not bypass strong encryption passwords.",
+  convert:
+    "Convert uses LibreOffice for Office/PDF conversions and pdf-lib for image-to-PDF conversion.",
+  optimize:
+    "Optimize reduces size and strips metadata where safe, while preserving document structure.",
+  repair:
+    "Repair performs best-effort re-save and structure normalization for partially corrupted files.",
+};
 
 const CONVERSION_TARGETS = {
   ".pdf": ["docx"],
@@ -98,6 +111,7 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [operation, setOperation] = useState("auto");
+  const [hoveredOperation, setHoveredOperation] = useState("");
   const [targetFormat, setTargetFormat] = useState("pdf");
   const [isProcessing, setIsProcessing] = useState(false);
   const [status, setStatus] = useState(null);
@@ -116,6 +130,9 @@ export default function App() {
     () => OPERATIONS.find((item) => item.value === operation),
     [operation],
   );
+
+  const activeOperationDetail =
+    OPERATION_DETAILS[hoveredOperation || operation] || OPERATION_DETAILS.auto;
 
   function setFailure(message, reason) {
     setStatus({
@@ -281,7 +298,9 @@ export default function App() {
             </section>
           )}
 
-          <section className="grid gap-4 md:grid-cols-2">
+          <section
+            className={`grid gap-4 ${operation === "convert" ? "md:grid-cols-2" : ""}`}
+          >
             <label className="flex flex-col gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-ink/75">
                 Mode
@@ -298,33 +317,61 @@ export default function App() {
                 ))}
               </select>
               <span className="text-xs text-ink/65">{operationMeta?.help}</span>
+
+              <div className="mt-1 flex flex-wrap gap-2">
+                {OPERATIONS.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onMouseEnter={() => setHoveredOperation(item.value)}
+                    onMouseLeave={() => setHoveredOperation("")}
+                    onFocus={() => setHoveredOperation(item.value)}
+                    onBlur={() => setHoveredOperation("")}
+                    className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                      (hoveredOperation || operation) === item.value
+                        ? "border-lagoon bg-foam text-tide"
+                        : "border-lagoon/30 bg-white text-ink/75 hover:border-lagoon/60"
+                    }`}
+                    title={OPERATION_DETAILS[item.value]}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="rounded-xl border border-lagoon/20 bg-foam/50 px-3 py-2 text-xs text-ink/80">
+                <p className="flex items-start gap-2">
+                  <CircleHelp className="mt-0.5 h-4 w-4 shrink-0 text-lagoon" />
+                  {activeOperationDetail}
+                </p>
+              </div>
             </label>
 
-            <label className="flex flex-col gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-ink/75">
-                Target Format
-              </span>
-              <select
-                value={targetFormat}
-                onChange={(event) => setTargetFormat(event.target.value)}
-                disabled={
-                  operation !== "convert" || availableTargets.length === 0
-                }
-                className="rounded-xl border border-lagoon/30 bg-white px-3 py-3 text-sm text-ink outline-none transition focus:border-coral disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {availableTargets.length === 0 && (
-                  <option value="">Not available</option>
-                )}
-                {availableTargets.map((target) => (
-                  <option key={target} value={target}>
-                    .{target}
-                  </option>
-                ))}
-              </select>
-              <span className="text-xs text-ink/65">
-                Conversion supports: PDF↔DOCX and Office/Image to PDF.
-              </span>
-            </label>
+                {operation === "convert" && (
+              <label className="flex flex-col gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-ink/75">
+                  Target Format
+                </span>
+                <select
+                  value={targetFormat}
+                  onChange={(event) => setTargetFormat(event.target.value)}
+                  disabled={availableTargets.length === 0}
+                  className="rounded-xl border border-lagoon/30 bg-white px-3 py-3 text-sm text-ink outline-none transition focus:border-coral disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {availableTargets.length === 0 && (
+                    <option value="">Not available</option>
+                  )}
+                  {availableTargets.map((target) => (
+                    <option key={target} value={target}>
+                      .{target}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs text-ink/65">
+                  Conversion supports: PDF↔DOCX and Office/Image to PDF.
+                </span>
+              </label>
+            )}
           </section>
 
           <button
