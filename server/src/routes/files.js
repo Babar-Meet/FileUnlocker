@@ -11,15 +11,30 @@ import { AppError } from "../../../utils/errors.js";
 const router = express.Router();
 const processingQueue = new AsyncTaskQueue(2);
 
-router.post("/process", upload.single("file"), async (req, res, next) => {
+const processUploadMiddleware = upload.fields([
+  { name: "file", maxCount: 1 },
+  { name: "files", maxCount: 30 },
+]);
+
+router.post("/process", processUploadMiddleware, async (req, res, next) => {
   try {
-    const operation = (req.body.operation || "auto").toLowerCase();
+    const operation = (req.body.operation || "unlock").toLowerCase();
     const targetFormat = req.body.targetFormat || "";
+    const pageRanges = req.body.pageRanges || "";
+
+    const groupedFiles = req.files || {};
+    const primaryFile = groupedFiles.file?.[0] || groupedFiles.files?.[0] || null;
+    const inputFiles = [
+      ...(groupedFiles.file || []),
+      ...(groupedFiles.files || []),
+    ];
 
     const result = await processingQueue.add(() =>
-      processUploadedFile(req.file, {
+      processUploadedFile(primaryFile, {
         operation,
         targetFormat,
+        pageRanges,
+        inputFiles,
       }),
     );
 

@@ -40,19 +40,19 @@ export const FILE_KIND_BY_EXTENSION = {
 };
 
 export const CONVERSION_TARGETS = {
-  ".pdf": ["docx", "odt", "rtf", "txt", "html"],
-  ".docx": ["pdf", "odt", "rtf", "txt", "html", "doc", "epub"],
-  ".pptx": ["pdf", "odp", "ppt", "html", "txt"],
-  ".xlsx": ["pdf", "ods", "xls", "csv", "html"],
+  ".pdf": ["docx", "pptx", "xlsx", "odt", "rtf", "txt", "html"],
+  ".docx": ["pdf", "odt", "rtf", "txt", "html", "doc", "epub", "pptx"],
+  ".pptx": ["pdf", "docx", "odp", "ppt", "html", "txt"],
+  ".xlsx": ["pdf", "ods", "xls", "csv", "html", "txt"],
   ".jpg": ["pdf", "png", "webp", "avif", "tiff"],
   ".jpeg": ["pdf", "png", "webp", "avif", "tiff"],
   ".png": ["pdf", "jpg", "jpeg", "webp", "avif", "tiff"],
 };
 
 export const OPERATION_MODES = new Set([
-  "auto",
   "unlock",
   "convert",
-  "optimize",
-  "repair",
+  "merge",
+  "split",
+  "ocr",
 ]);

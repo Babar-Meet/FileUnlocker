@@ -1,4 +1,3 @@
-import path from "node:path";
 import fs from "fs-extra";
 import mime from "mime-types";
 import { AppError } from "../errors.js";
@@ -9,29 +8,16 @@ import {
   normalizeTargetFormat,
 } from "../helpers/fileType.js";
 import {
-  normalizeOfficeDocument,
-  repairOfficeDocument,
   unlockDocxRestrictions,
   unlockPptxRestrictions,
 } from "./officeProcessor.js";
-import {
-  optimizeXlsx,
-  repairXlsx,
-  unlockXlsxSheetProtection,
-} from "./excelProcessor.js";
-import {
-  convertImageToFormat,
-  convertImageToPdf,
-  optimizeImage,
-  repairImage,
-} from "./imageProcessor.js";
-import { normalizeZip, repairZip } from "./zipProcessor.js";
+import { unlockXlsxSheetProtection } from "./excelProcessor.js";
+import { convertImageToFormat, convertImageToPdf } from "./imageProcessor.js";
+import { normalizeZip } from "./zipProcessor.js";
 import { convertWithLibreOffice } from "./conversionProcessor.js";
-import {
-  optimizePdf,
-  repairPdf,
-  unlockPdfRestrictions,
-} from "./pdfProcessor.js";
+import { unlockPdfRestrictions } from "./pdfProcessor.js";
+import { mergePdfFiles, splitPdfByRanges } from "./mergeSplitProcessor.js";
+import { runOcrExtraction } from "./ocrProcessor.js";
 
 function createOutputPath(outputBasePath, extension) {
   return `${outputBasePath}${extension}`;
@@ -74,78 +60,12 @@ async function unlockByType({ fileType, inputPath, outputPath, qpdfBin }) {
 
   if (fileType.extension === ".zip") {
     await normalizeZip({ inputPath, outputPath });
-    return "ZIP extracted and rebuilt successfully.";
+    return "ZIP validated and rebuilt successfully.";
   }
 
   throw unsupportedFile(
-    "Unlock is only available for PDF, DOCX, PPTX, XLSX, and ZIP",
+    "Unlock is supported for PDF, DOCX, PPTX, XLSX, and ZIP files",
   );
-}
-
-async function optimizeByType({ fileType, inputPath, outputPath, qpdfBin }) {
-  if (fileType.extension === ".pdf") {
-    await optimizePdf({ inputPath, outputPath, qpdfBin });
-    return "PDF optimized and normalized.";
-  }
-
-  if (fileType.kind === "image") {
-    await optimizeImage({ inputPath, outputPath });
-    return "Image compressed and metadata stripped.";
-  }
-
-  if (fileType.extension === ".docx" || fileType.extension === ".pptx") {
-    await normalizeOfficeDocument({
-      inputPath,
-      outputPath,
-      extension: fileType.extension,
-    });
-    return "Office document normalized and metadata removed.";
-  }
-
-  if (fileType.extension === ".xlsx") {
-    await optimizeXlsx({ inputPath, outputPath });
-    return "Spreadsheet normalized and metadata removed.";
-  }
-
-  if (fileType.extension === ".zip") {
-    await normalizeZip({ inputPath, outputPath });
-    return "ZIP normalized for clean structure.";
-  }
-
-  throw unsupportedFile("Optimize is not supported for this file type");
-}
-
-async function repairByType({ fileType, inputPath, outputPath, qpdfBin }) {
-  if (fileType.extension === ".pdf") {
-    await repairPdf({ inputPath, outputPath, qpdfBin });
-    return "PDF repaired and re-saved.";
-  }
-
-  if (fileType.extension === ".docx" || fileType.extension === ".pptx") {
-    await repairOfficeDocument({
-      inputPath,
-      outputPath,
-      extension: fileType.extension,
-    });
-    return "Office file repaired and re-saved.";
-  }
-
-  if (fileType.extension === ".xlsx") {
-    await repairXlsx({ inputPath, outputPath });
-    return "Spreadsheet repaired and re-saved.";
-  }
-
-  if (fileType.kind === "image") {
-    await repairImage({ inputPath, outputPath });
-    return "Image repaired and re-saved.";
-  }
-
-  if (fileType.extension === ".zip") {
-    await repairZip({ inputPath, outputPath });
-    return "ZIP repaired and rebuilt.";
-  }
-
-  throw unsupportedFile("Repair is not supported for this file type");
 }
 
 async function convertByType({
@@ -179,50 +99,59 @@ async function convertByType({
   return "File converted successfully.";
 }
 
-async function autoByType({
-  fileType,
-  inputPath,
-  outputPath,
-  workDir,
-  qpdfBin,
-}) {
-  if (fileType.extension === ".pdf") {
-    const unlockedPath = path.join(workDir, "unlocked.pdf");
-    await unlockPdfRestrictions({
-      inputPath,
-      outputPath: unlockedPath,
-      qpdfBin,
-    });
-    await optimizePdf({ inputPath: unlockedPath, outputPath, qpdfBin });
-    return "PDF unlocked (restrictions only), optimized, and normalized.";
+async function mergeByType({ inputFiles, outputPath }) {
+  if (!Array.isArray(inputFiles) || inputFiles.length < 2) {
+    throw unsupportedFile("Merge requires at least two files");
   }
 
-  if (fileType.extension === ".docx") {
-    await unlockDocxRestrictions({ inputPath, outputPath });
-    return "DOCX restrictions removed and document normalized.";
+  const validatedFiles = inputFiles.map((file) => {
+    const fileType = detectFileType(file.originalName, file.mimeType);
+    if (!fileType) {
+      throw unsupportedFile(
+        "Merge only supports PDF files that pass MIME and extension checks",
+      );
+    }
+
+    if (fileType.extension !== ".pdf") {
+      throw unsupportedFile("Merge currently supports PDF files only");
+    }
+
+    return file;
+  });
+
+  await mergePdfFiles({
+    inputFiles: validatedFiles.map((file) => ({
+      path: file.path,
+      originalName: file.originalName,
+    })),
+    outputPath,
+  });
+
+  return "PDF files merged successfully.";
+}
+
+async function splitByType({ fileType, inputPath, outputPath, pageRanges }) {
+  if (fileType.extension !== ".pdf") {
+    throw unsupportedFile("Split currently supports PDF files only");
   }
 
-  if (fileType.extension === ".pptx") {
-    await unlockPptxRestrictions({ inputPath, outputPath });
-    return "PPTX restrictions removed and document normalized.";
-  }
+  await splitPdfByRanges({
+    inputPath,
+    outputPath,
+    pageRanges,
+  });
 
-  if (fileType.extension === ".xlsx") {
-    await unlockXlsxSheetProtection({ inputPath, outputPath });
-    return "XLSX sheet protection removed and workbook normalized.";
-  }
+  return "PDF pages split successfully. Download includes a ZIP package.";
+}
 
-  if (fileType.kind === "image") {
-    await optimizeImage({ inputPath, outputPath });
-    return "Image optimized and metadata stripped.";
-  }
+async function ocrByType({ fileType, inputPath, outputPath }) {
+  await runOcrExtraction({
+    inputPath,
+    extension: fileType.extension,
+    outputPath,
+  });
 
-  if (fileType.extension === ".zip") {
-    await normalizeZip({ inputPath, outputPath });
-    return "ZIP validated and normalized.";
-  }
-
-  throw unsupportedFile();
+  return "OCR/text extraction completed. Download the TXT output.";
 }
 
 export async function processFile({
@@ -231,11 +160,37 @@ export async function processFile({
   mimeType,
   operation,
   targetFormat,
+  pageRanges,
+  inputFiles = [],
   outputBasePath,
-  workDir,
   qpdfBin,
   libreOfficeBin,
 }) {
+  const normalizedOperation = (operation || "unlock").toLowerCase();
+  if (!isValidOperation(normalizedOperation)) {
+    throw unsupportedFile("Unsupported operation mode");
+  }
+
+  if (normalizedOperation === "merge") {
+    const outputExtension = ".pdf";
+    const outputPath = createOutputPath(outputBasePath, outputExtension);
+
+    const message = await mergeByType({
+      inputFiles,
+      outputPath,
+    });
+
+    await ensureOutputExists(outputPath);
+
+    return {
+      outputPath,
+      outputExtension,
+      message,
+      detectedType: "PDF",
+      mimeType: mime.lookup(outputExtension) || "application/octet-stream",
+    };
+  }
+
   const fileType = detectFileType(originalName, mimeType);
   if (!fileType) {
     throw unsupportedFile(
@@ -243,14 +198,9 @@ export async function processFile({
     );
   }
 
-  const normalizedOperation = (operation || "auto").toLowerCase();
-  if (!isValidOperation(normalizedOperation)) {
-    throw unsupportedFile("Unsupported operation mode");
-  }
-
   let outputExtension = fileType.extension;
-  let message = "File processed successfully.";
   let outputPath = createOutputPath(outputBasePath, outputExtension);
+  let message = "File processed successfully.";
 
   if (normalizedOperation === "convert") {
     const normalizedTarget = normalizeTargetFormat(targetFormat);
@@ -279,31 +229,26 @@ export async function processFile({
     });
   }
 
-  if (normalizedOperation === "optimize") {
-    message = await optimizeByType({
+  if (normalizedOperation === "split") {
+    outputExtension = ".zip";
+    outputPath = createOutputPath(outputBasePath, outputExtension);
+
+    message = await splitByType({
       fileType,
       inputPath,
       outputPath,
-      qpdfBin,
+      pageRanges,
     });
   }
 
-  if (normalizedOperation === "repair") {
-    message = await repairByType({
-      fileType,
-      inputPath,
-      outputPath,
-      qpdfBin,
-    });
-  }
+  if (normalizedOperation === "ocr") {
+    outputExtension = ".txt";
+    outputPath = createOutputPath(outputBasePath, outputExtension);
 
-  if (normalizedOperation === "auto") {
-    message = await autoByType({
+    message = await ocrByType({
       fileType,
       inputPath,
       outputPath,
-      workDir,
-      qpdfBin,
     });
   }
 

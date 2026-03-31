@@ -9,7 +9,10 @@ import { LIBREOFFICE_BIN, OUTPUT_DIR, QPDF_BIN, WORK_DIR } from "../config.js";
 import { setDownloadRecord } from "./downloadStore.js";
 
 export async function processUploadedFile(uploadedFile, options = {}) {
-  if (!uploadedFile) {
+  const normalizedInputFiles = (options.inputFiles || []).filter(Boolean);
+  const primaryFile = uploadedFile || normalizedInputFiles[0] || null;
+
+  if (!primaryFile) {
     throw new AppError("Unsupported file", "UNSUPPORTED_FILE", 400);
   }
 
@@ -20,18 +23,27 @@ export async function processUploadedFile(uploadedFile, options = {}) {
 
   try {
     const processed = await processFile({
-      inputPath: uploadedFile.path,
-      originalName: uploadedFile.originalname,
-      mimeType: uploadedFile.mimetype,
+      inputPath: primaryFile.path,
+      originalName: primaryFile.originalname,
+      mimeType: primaryFile.mimetype,
       operation: options.operation,
       targetFormat: options.targetFormat,
+      pageRanges: options.pageRanges,
+      inputFiles: normalizedInputFiles.map((file) => ({
+        path: file.path,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+      })),
       outputBasePath: path.join(OUTPUT_DIR, downloadId),
       workDir: jobWorkDir,
       qpdfBin: QPDF_BIN,
       libreOfficeBin: LIBREOFFICE_BIN,
     });
 
-    const baseName = path.parse(uploadedFile.originalname).name;
+    const baseName =
+      options.operation === "merge"
+        ? "merged_files"
+        : path.parse(primaryFile.originalname).name;
     const downloadName = `${baseName}_processed${processed.outputExtension}`;
 
     setDownloadRecord(downloadId, {
@@ -51,7 +63,17 @@ export async function processUploadedFile(uploadedFile, options = {}) {
       detectedType: processed.detectedType,
     };
   } finally {
-    await safeUnlink(uploadedFile.path);
+    const cleanupPaths = new Set();
+    cleanupPaths.add(primaryFile.path);
+    for (const file of normalizedInputFiles) {
+      if (file.path) {
+        cleanupPaths.add(file.path);
+      }
+    }
+
+    await Promise.allSettled(
+      Array.from(cleanupPaths).map((filePath) => safeUnlink(filePath)),
+    );
     await safeRemoveDir(jobWorkDir);
   }
 }

@@ -1,7 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import {
-  BadgeCheck,
   CheckCircle2,
   Download,
   FileArchive,
@@ -13,12 +12,9 @@ import {
   ScanSearch,
   Scissors,
   ShieldAlert,
-  Sparkles,
   Split,
-  Stamp,
   UploadCloud,
   WandSparkles,
-  Wrench,
   XCircle,
 } from "lucide-react";
 
@@ -27,89 +23,52 @@ const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 const TOOL_ITEMS = [
   {
-    value: "auto",
-    label: "Smart Auto",
-    help: "Detect file type and run safest processing path",
-    detail:
-      "Auto mode picks the best route per file type and keeps encryption boundaries intact.",
-    icon: Sparkles,
-    enabled: true,
-  },
-  {
     value: "unlock",
     label: "Unlock",
-    help: "Remove editable/copy/print restrictions",
+    help: "Remove restriction-based protections only",
     detail:
-      "Unlock removes restriction-level controls only. Strong encryption and passwords are never bypassed.",
+      "Unlock removes edit/print/copy restrictions where supported. Strong encryption and passwords are never bypassed.",
     icon: LockOpen,
-    enabled: true,
   },
   {
     value: "convert",
     label: "Convert",
-    help: "Convert to many common output formats",
+    help: "Convert file formats with broad target support",
     detail:
-      "Convert uses LibreOffice for document conversions and Sharp/pdf-lib for image conversions.",
+      "Convert supports Office/PDF conversions through LibreOffice plus image format conversions through Sharp.",
     icon: WandSparkles,
-    enabled: true,
-  },
-  {
-    value: "optimize",
-    label: "Optimize",
-    help: "Compress and strip metadata",
-    detail:
-      "Optimize reduces size, normalizes structure, and removes metadata where safe.",
-    icon: BadgeCheck,
-    enabled: true,
-  },
-  {
-    value: "repair",
-    label: "Repair",
-    help: "Best-effort structure repair",
-    detail:
-      "Repair re-saves and normalizes supported files when partial corruption is detected.",
-    icon: Wrench,
-    enabled: true,
   },
   {
     value: "merge",
     label: "Merge",
-    help: "Combine documents",
-    detail: "Coming soon.",
+    help: "Merge multiple PDFs into one file",
+    detail:
+      "Merge combines at least two PDFs into one output file. This operation is PDF-only.",
     icon: Split,
-    enabled: false,
   },
   {
     value: "split",
     label: "Split",
-    help: "Split pages/slides",
-    detail: "Coming soon.",
+    help: "Split one PDF by page ranges",
+    detail:
+      "Split exports selected page ranges as separate PDFs and returns a ZIP package.",
     icon: Scissors,
-    enabled: false,
   },
   {
     value: "ocr",
     label: "OCR",
-    help: "Scan text from images/PDF",
-    detail: "Coming soon.",
+    help: "Extract readable text into TXT",
+    detail:
+      "OCR extracts text content from supported files and returns a TXT result for quick copy and review.",
     icon: ScanSearch,
-    enabled: false,
-  },
-  {
-    value: "watermark",
-    label: "Watermark",
-    help: "Apply watermarks",
-    detail: "Coming soon.",
-    icon: Stamp,
-    enabled: false,
   },
 ];
 
 const CONVERSION_TARGETS = {
-  ".pdf": ["docx", "odt", "rtf", "txt", "html"],
-  ".docx": ["pdf", "odt", "rtf", "txt", "html", "doc", "epub"],
-  ".pptx": ["pdf", "odp", "ppt", "html", "txt"],
-  ".xlsx": ["pdf", "ods", "xls", "csv", "html"],
+  ".pdf": ["docx", "pptx", "xlsx", "odt", "rtf", "txt", "html"],
+  ".docx": ["pdf", "odt", "rtf", "txt", "html", "doc", "epub", "pptx"],
+  ".pptx": ["pdf", "docx", "odp", "ppt", "html", "txt"],
+  ".xlsx": ["pdf", "ods", "xls", "csv", "html", "txt"],
   ".jpg": ["pdf", "png", "webp", "avif", "tiff"],
   ".jpeg": ["pdf", "png", "webp", "avif", "tiff"],
   ".png": ["pdf", "jpg", "jpeg", "webp", "avif", "tiff"],
@@ -154,36 +113,26 @@ function FileTypeIcon({ extension }) {
   return <FileText className="h-8 w-8 text-lagoon" />;
 }
 
-function StepCard({ index, title, text }) {
-  return (
-    <div className="rounded-xl border border-lagoon/15 bg-white/75 p-3">
-      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-lagoon/75">
-        Step {index}
-      </p>
-      <p className="mt-1 text-sm font-semibold text-ink">{title}</p>
-      <p className="mt-1 text-xs text-ink/65">{text}</p>
-    </div>
-  );
-}
-
 function HomePage() {
   const fileInputRef = useRef(null);
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFiles, setSelectedFiles] = useState([]);
   const [dragActive, setDragActive] = useState(false);
-  const [operation, setOperation] = useState("auto");
+  const [operation, setOperation] = useState("unlock");
   const [hoveredOperation, setHoveredOperation] = useState("");
-  const [targetFormat, setTargetFormat] = useState("pdf");
+  const [targetFormat, setTargetFormat] = useState("");
+  const [pageRanges, setPageRanges] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [status, setStatus] = useState(null);
 
-  const selectedExtension = useMemo(
-    () => (selectedFile ? getExtension(selectedFile.name) : ""),
-    [selectedFile],
+  const primaryFile = selectedFiles[0] || null;
+  const primaryExtension = useMemo(
+    () => (primaryFile ? getExtension(primaryFile.name) : ""),
+    [primaryFile],
   );
 
   const availableTargets = useMemo(
-    () => CONVERSION_TARGETS[selectedExtension] || [],
-    [selectedExtension],
+    () => CONVERSION_TARGETS[primaryExtension] || [],
+    [primaryExtension],
   );
 
   const currentTool = useMemo(
@@ -205,46 +154,80 @@ function HomePage() {
     });
   }
 
-  function onPickFile(file) {
-    if (!file) {
+  function onPickFiles(fileList) {
+    const incomingFiles = Array.from(fileList || []);
+    if (incomingFiles.length === 0) {
       return;
     }
 
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      setFailure("Processing failed", "Max file size is 50MB");
-      return;
+    for (const file of incomingFiles) {
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        setFailure("Processing failed", "Each file must be 50MB or less");
+        return;
+      }
     }
 
-    setSelectedFile(file);
+    const normalizedFiles =
+      operation === "merge" ? incomingFiles : incomingFiles.slice(0, 1);
+
+    setSelectedFiles(normalizedFiles);
     setStatus(null);
 
-    const nextTargets = CONVERSION_TARGETS[getExtension(file.name)] || [];
-    if (nextTargets.length === 0) {
-      setTargetFormat("");
-      return;
-    }
-
-    if (nextTargets.length > 0) {
-      setTargetFormat(nextTargets[0]);
-    }
+    const firstExtension = getExtension(normalizedFiles[0].name);
+    const nextTargets = CONVERSION_TARGETS[firstExtension] || [];
+    setTargetFormat(nextTargets[0] || "");
   }
 
   function onDrop(event) {
     event.preventDefault();
     setDragActive(false);
+    onPickFiles(event.dataTransfer.files);
+  }
 
-    const [file] = event.dataTransfer.files;
-    onPickFile(file);
+  function onOperationChange(nextOperation) {
+    setOperation(nextOperation);
+    setStatus(null);
+
+    if (nextOperation !== "merge" && selectedFiles.length > 1) {
+      const firstFile = selectedFiles[0];
+      setSelectedFiles([firstFile]);
+      const nextTargets =
+        CONVERSION_TARGETS[getExtension(firstFile.name)] || [];
+      setTargetFormat(nextTargets[0] || "");
+    }
   }
 
   async function handleSubmit() {
-    if (!selectedFile) {
+    if (selectedFiles.length === 0) {
       setFailure("Unsupported file", "Please upload a file first");
       return;
     }
 
+    if (operation === "merge") {
+      if (selectedFiles.length < 2) {
+        setFailure("Unsupported file", "Merge requires at least two PDF files");
+        return;
+      }
+
+      const allPdf = selectedFiles.every(
+        (file) => getExtension(file.name) === ".pdf",
+      );
+      if (!allPdf) {
+        setFailure("Unsupported file", "Merge supports PDF files only");
+        return;
+      }
+    }
+
+    if (operation === "split" && primaryExtension !== ".pdf") {
+      setFailure("Unsupported file", "Split supports PDF files only");
+      return;
+    }
+
     if (operation === "convert" && availableTargets.length === 0) {
-      setFailure("Unsupported file", "This file type cannot be converted here");
+      setFailure(
+        "Unsupported file",
+        "No conversion target available for this file",
+      );
       return;
     }
 
@@ -253,10 +236,22 @@ function HomePage() {
 
     try {
       const formData = new FormData();
-      formData.append("file", selectedFile);
       formData.append("operation", operation);
+
       if (operation === "convert") {
         formData.append("targetFormat", targetFormat);
+      }
+
+      if (operation === "split" && pageRanges.trim()) {
+        formData.append("pageRanges", pageRanges.trim());
+      }
+
+      if (operation === "merge") {
+        selectedFiles.forEach((file) => {
+          formData.append("files", file);
+        });
+      } else {
+        formData.append("file", selectedFiles[0]);
       }
 
       const response = await fetch(buildEndpoint("/process"), {
@@ -304,7 +299,6 @@ function HomePage() {
       <div className="relative w-full overflow-hidden rounded-3xl border border-white/60 bg-white/75 shadow-panel backdrop-blur-lg">
         <div className="pointer-events-none absolute -left-16 -top-20 h-72 w-72 rounded-full bg-lagoon/15 blur-3xl" />
         <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-coral/20 blur-3xl" />
-        <div className="pointer-events-none absolute bottom-0 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full bg-tide/10 blur-3xl" />
 
         <header className="relative z-10 border-b border-lagoon/15 bg-gradient-to-r from-tide via-tide to-lagoon px-4 py-4 text-white sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -313,11 +307,11 @@ function HomePage() {
                 FileUnlocker
               </p>
               <h1 className="mt-1 font-display text-xl font-bold sm:text-2xl">
-                Premium File Studio
+                Document Toolkit
               </h1>
             </div>
             <p className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white/90">
-              Restriction Unlock • Conversion • Repair • Optimize
+              Unlock • Convert • Merge • Split • OCR
             </p>
           </div>
 
@@ -331,18 +325,15 @@ function HomePage() {
                   <button
                     key={item.value}
                     type="button"
-                    disabled={!item.enabled}
-                    onClick={() => item.enabled && setOperation(item.value)}
+                    onClick={() => onOperationChange(item.value)}
                     onMouseEnter={() => setHoveredOperation(item.value)}
                     onMouseLeave={() => setHoveredOperation("")}
                     onFocus={() => setHoveredOperation(item.value)}
                     onBlur={() => setHoveredOperation("")}
                     className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition ${
-                      item.enabled
-                        ? isActive
-                          ? "border-white bg-white text-tide"
-                          : "border-white/30 bg-white/10 text-white hover:border-white/70 hover:bg-white/20"
-                        : "cursor-not-allowed border-white/20 bg-white/5 text-white/45"
+                      isActive
+                        ? "border-white bg-white text-tide"
+                        : "border-white/30 bg-white/10 text-white hover:border-white/70 hover:bg-white/20"
                     }`}
                     title={item.help}
                   >
@@ -390,65 +381,47 @@ function HomePage() {
               <input
                 ref={fileInputRef}
                 type="file"
+                multiple={operation === "merge"}
                 className="hidden"
-                onChange={(event) => onPickFile(event.target.files?.[0])}
+                onChange={(event) => onPickFiles(event.target.files)}
               />
               <UploadCloud className="mx-auto h-12 w-12 text-lagoon" />
               <p className="mt-4 font-display text-xl font-semibold text-ink">
-                Drag and drop your file, or click to upload
+                {operation === "merge"
+                  ? "Drop multiple PDF files, or click to select"
+                  : "Drag and drop your file, or click to upload"}
               </p>
               <p className="mt-2 text-sm text-ink/65">
-                Supported: PDF, DOCX, PPTX, XLSX, JPG, PNG, ZIP (max 50MB)
+                Supported: PDF, DOCX, PPTX, XLSX, JPG, PNG, ZIP (max 50MB each)
               </p>
             </section>
 
-            {selectedFile && (
+            {selectedFiles.length > 0 && (
               <section className="rounded-2xl border border-lagoon/20 bg-white/80 p-4">
-                <div className="flex items-start gap-4">
-                  <FileTypeIcon extension={selectedExtension} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-ink sm:text-base">
-                      {selectedFile.name}
-                    </p>
-                    <p className="mt-1 text-xs text-ink/70 sm:text-sm">
-                      {formatBytes(selectedFile.size)} •{" "}
-                      {selectedFile.type || "Unknown MIME"}
-                    </p>
-                  </div>
+                <div className="space-y-3">
+                  {selectedFiles.map((file) => (
+                    <div
+                      key={`${file.name}-${file.size}`}
+                      className="flex items-start gap-3"
+                    >
+                      <FileTypeIcon extension={getExtension(file.name)} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-ink sm:text-base">
+                          {file.name}
+                        </p>
+                        <p className="mt-1 text-xs text-ink/70 sm:text-sm">
+                          {formatBytes(file.size)} •{" "}
+                          {file.type || "Unknown MIME"}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </section>
             )}
           </div>
 
           <aside className="space-y-4">
-            <section className="rounded-2xl border border-lagoon/20 bg-white/85 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/60">
-                Process Flow
-              </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                <StepCard
-                  index="01"
-                  title="Choose a tool"
-                  text="Use the top navbar to pick unlock, convert, optimize, or repair."
-                />
-                <StepCard
-                  index="02"
-                  title="Upload file"
-                  text="Drop your file or click the upload zone."
-                />
-                <StepCard
-                  index="03"
-                  title="Process"
-                  text="Run secure processing queue with transparent status."
-                />
-                <StepCard
-                  index="04"
-                  title="Download"
-                  text="Get the processed result with one click."
-                />
-              </div>
-            </section>
-
             {operation === "convert" && (
               <section className="rounded-2xl border border-lagoon/20 bg-white/85 p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/60">
@@ -470,8 +443,35 @@ function HomePage() {
                   ))}
                 </select>
                 <p className="mt-2 text-xs text-ink/65">
-                  Available targets are based on file type and processor
-                  capability.
+                  Includes PDF to Word, PPT to Word, and other common office
+                  conversions.
+                </p>
+              </section>
+            )}
+
+            {operation === "split" && (
+              <section className="rounded-2xl border border-lagoon/20 bg-white/85 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/60">
+                  Split Page Ranges
+                </p>
+                <input
+                  type="text"
+                  value={pageRanges}
+                  onChange={(event) => setPageRanges(event.target.value)}
+                  placeholder="Example: 1-3,5,7-10"
+                  className="mt-2 w-full rounded-xl border border-lagoon/30 bg-white px-3 py-3 text-sm text-ink outline-none transition focus:border-coral"
+                />
+                <p className="mt-2 text-xs text-ink/65">
+                  Leave empty to split all pages individually.
+                </p>
+              </section>
+            )}
+
+            {operation === "merge" && (
+              <section className="rounded-2xl border border-lagoon/20 bg-white/85 p-4">
+                <p className="text-sm text-ink/80">
+                  Merge requires at least two PDF files and returns one merged
+                  PDF.
                 </p>
               </section>
             )}
@@ -479,7 +479,7 @@ function HomePage() {
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={!selectedFile || isProcessing}
+              disabled={selectedFiles.length === 0 || isProcessing}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-tide px-5 py-3 text-sm font-semibold text-white transition hover:bg-tide/90 disabled:cursor-not-allowed disabled:bg-tide/50"
             >
               {isProcessing ? (
@@ -489,26 +489,11 @@ function HomePage() {
                 </>
               ) : (
                 <>
-                  <Wrench className="h-5 w-5" />
+                  <WandSparkles className="h-5 w-5" />
                   Process File
                 </>
               )}
             </button>
-
-            {isProcessing && (
-              <section className="rounded-2xl border border-lagoon/20 bg-foam/40 p-4">
-                <div className="flex items-center gap-3">
-                  <LoaderCircle className="h-5 w-5 animate-spin text-lagoon" />
-                  <p className="text-sm text-ink">
-                    Running secure processing queue. This can take a moment for
-                    large files.
-                  </p>
-                </div>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
-                  <div className="h-full w-1/2 animate-pulse rounded-full bg-lagoon" />
-                </div>
-              </section>
-            )}
 
             {status && (
               <section
