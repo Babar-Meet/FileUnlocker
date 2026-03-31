@@ -1,0 +1,26 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Space+Grotesk:wght@400;500;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply m-0 min-h-screen bg-sand font-body text-ink;
+  background-image:
+    radial-gradient(
+      circle at 12% 20%,
+      rgba(59, 142, 165, 0.25),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 88% 16%,
+      rgba(255, 131, 87, 0.22),
+      transparent 35%
+    ),
+    radial-gradient(circle at 50% 90%, rgba(18, 69, 89, 0.16), transparent 28%);
+  background-attachment: fixed;
+}
+
+#root {
+  min-height: 100vh;
+}

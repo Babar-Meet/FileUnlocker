@@ -1,0 +1,29 @@
+{
+  "name": "file-unlocker-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "cors": "^2.8.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "fs-extra": "^11.2.0",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.8.0",
+    "mime-types": "^2.1.35",
+    "multer": "^2.0.2",
+    "pdf-lib": "^1.17.1",
+    "sharp": "^0.33.5",
+    "unzipper": "^0.12.3",
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
