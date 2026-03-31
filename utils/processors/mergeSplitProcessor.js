@@ -1,6 +1,5 @@
 import path from "node:path";
 import fs from "fs-extra";
-import archiver from "archiver";
 import { PDFDocument } from "pdf-lib";
 import { AppError } from "../errors.js";
 import { SECURE_ENCRYPTION_MESSAGE } from "../constants.js";
@@ -103,25 +102,19 @@ export async function mergePdfFiles({ inputFiles, outputPath }) {
   await fs.writeFile(outputPath, await mergedDocument.save());
 }
 
-export async function splitPdfByRanges({ inputPath, outputPath, pageRanges }) {
+export async function splitPdfByRanges({
+  inputPath,
+  outputDir,
+  outputPrefix,
+  pageRanges,
+}) {
   const inputPdf = await loadPdfFromPath(inputPath);
   const pageCount = inputPdf.getPageCount();
   const segments = normalizePageRanges(pageRanges, pageCount);
 
-  await fs.ensureDir(path.dirname(outputPath));
+  await fs.ensureDir(outputDir);
 
-  const outputStream = fs.createWriteStream(outputPath);
-  const archive = archiver("zip", {
-    zlib: { level: 9 },
-  });
-
-  const archiveDone = new Promise((resolve, reject) => {
-    outputStream.on("close", resolve);
-    outputStream.on("error", reject);
-    archive.on("error", reject);
-  });
-
-  archive.pipe(outputStream);
+  const outputs = [];
 
   for (let index = 0; index < segments.length; index += 1) {
     const [startPage, endPage] = segments[index];
@@ -141,11 +134,16 @@ export async function splitPdfByRanges({ inputPath, outputPath, pageRanges }) {
         ? `page_${startPage}.pdf`
         : `pages_${startPage}-${endPage}.pdf`;
 
-    archive.append(Buffer.from(splitBuffer), {
-      name: `part_${index + 1}_${fileName}`,
+    const outputName = `${outputPrefix}_part_${index + 1}_${fileName}`;
+    const outputPath = path.join(outputDir, outputName);
+    await fs.writeFile(outputPath, splitBuffer);
+
+    outputs.push({
+      outputPath,
+      outputName,
+      outputExtension: ".pdf",
     });
   }
 
-  archive.finalize();
-  await archiveDone;
+  return outputs;
 }

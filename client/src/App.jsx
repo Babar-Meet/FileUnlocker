@@ -27,39 +27,39 @@ const TOOL_ITEMS = [
     label: "Unlock",
     help: "Remove restriction-based protections only",
     detail:
-      "Unlock removes edit/print/copy restrictions where supported. Strong encryption and passwords are never bypassed.",
+      "Unlock removes edit and copy restrictions where supported. Strong encryption and passwords are never bypassed.",
     icon: LockOpen,
   },
   {
     value: "convert",
     label: "Convert",
-    help: "Convert file formats with broad target support",
+    help: "Convert many files at once",
     detail:
-      "Convert supports Office/PDF conversions through LibreOffice plus image format conversions through Sharp.",
+      "Batch convert supports Office and image workflows, including PDF to DOCX/PPTX/XLSX where supported by LibreOffice.",
     icon: WandSparkles,
   },
   {
     value: "merge",
     label: "Merge",
-    help: "Merge multiple PDFs into one file",
+    help: "Merge mixed files into one final document",
     detail:
-      "Merge combines at least two PDFs into one output file. This operation is PDF-only.",
+      "Merge can combine PDF, DOCX, PPTX, XLSX, JPG, and PNG into one final PDF or DOCX output.",
     icon: Split,
   },
   {
     value: "split",
     label: "Split",
-    help: "Split one PDF by page ranges",
+    help: "Split one PDF into multiple files",
     detail:
-      "Split exports selected page ranges as separate PDFs and returns a ZIP package.",
+      "Split exports real PDF files (not ZIP-only packaging), and each output can be downloaded individually.",
     icon: Scissors,
   },
   {
     value: "ocr",
     label: "OCR",
-    help: "Extract readable text into TXT",
+    help: "Extract text from multiple files",
     detail:
-      "OCR extracts text content from supported files and returns a TXT result for quick copy and review.",
+      "OCR/text extraction supports bulk processing and returns individual TXT outputs per file.",
     icon: ScanSearch,
   },
 ];
@@ -74,16 +74,15 @@ const CONVERSION_TARGETS = {
   ".png": ["pdf", "jpg", "jpeg", "webp", "avif", "tiff"],
 };
 
+const MERGE_TARGETS = ["pdf", "docx"];
+
 function getExtension(fileName) {
   const splitName = fileName.toLowerCase().split(".");
   return splitName.length > 1 ? `.${splitName.pop()}` : "";
 }
 
 function formatBytes(value) {
-  if (value === 0) {
-    return "0 B";
-  }
-
+  if (value === 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
   const sizeIndex = Math.min(
     Math.floor(Math.log(value) / Math.log(1024)),
@@ -101,15 +100,12 @@ function FileTypeIcon({ extension }) {
   if ([".jpg", ".jpeg", ".png"].includes(extension)) {
     return <FileImage className="h-8 w-8 text-lagoon" />;
   }
-
   if (extension === ".xlsx") {
     return <FileSpreadsheet className="h-8 w-8 text-lagoon" />;
   }
-
   if (extension === ".zip") {
     return <FileArchive className="h-8 w-8 text-lagoon" />;
   }
-
   return <FileText className="h-8 w-8 text-lagoon" />;
 }
 
@@ -124,17 +120,6 @@ function HomePage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [status, setStatus] = useState(null);
 
-  const primaryFile = selectedFiles[0] || null;
-  const primaryExtension = useMemo(
-    () => (primaryFile ? getExtension(primaryFile.name) : ""),
-    [primaryFile],
-  );
-
-  const availableTargets = useMemo(
-    () => CONVERSION_TARGETS[primaryExtension] || [],
-    [primaryExtension],
-  );
-
   const currentTool = useMemo(
     () => TOOL_ITEMS.find((item) => item.value === operation) || TOOL_ITEMS[0],
     [operation],
@@ -146,19 +131,74 @@ function HomePage() {
     [hoveredOperation, currentTool],
   );
 
+  const convertTargetOptions = useMemo(() => {
+    if (operation !== "convert" || selectedFiles.length === 0) {
+      return [];
+    }
+
+    const targetSets = selectedFiles.map(
+      (file) => CONVERSION_TARGETS[getExtension(file.name)] || [],
+    );
+
+    if (targetSets.some((set) => set.length === 0)) {
+      return [];
+    }
+
+    return targetSets.reduce((accumulator, currentSet) =>
+      accumulator.filter((value) => currentSet.includes(value)),
+    );
+  }, [operation, selectedFiles]);
+
   function setFailure(message, reason) {
     setStatus({
       kind: "failed",
       message,
       reason,
+      results: [],
+      batchDownloadUrl: "",
     });
+  }
+
+  function onOperationChange(nextOperation) {
+    setOperation(nextOperation);
+    setStatus(null);
+    setPageRanges("");
+
+    if (nextOperation === "merge") {
+      setTargetFormat("pdf");
+      return;
+    }
+
+    if (nextOperation === "convert") {
+      if (selectedFiles.length > 0) {
+        const targetSets = selectedFiles.map(
+          (file) => CONVERSION_TARGETS[getExtension(file.name)] || [],
+        );
+        if (targetSets.some((set) => set.length === 0)) {
+          setTargetFormat("");
+          return;
+        }
+
+        const intersection = targetSets.reduce((accumulator, currentSet) =>
+          accumulator.filter((value) => currentSet.includes(value)),
+        );
+        setTargetFormat(intersection[0] || "");
+      } else {
+        setTargetFormat("");
+      }
+      return;
+    }
+
+    setTargetFormat("");
+
+    if (nextOperation === "split" && selectedFiles.length > 1) {
+      setSelectedFiles([selectedFiles[0]]);
+    }
   }
 
   function onPickFiles(fileList) {
     const incomingFiles = Array.from(fileList || []);
-    if (incomingFiles.length === 0) {
-      return;
-    }
+    if (incomingFiles.length === 0) return;
 
     for (const file of incomingFiles) {
       if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -168,14 +208,31 @@ function HomePage() {
     }
 
     const normalizedFiles =
-      operation === "merge" ? incomingFiles : incomingFiles.slice(0, 1);
+      operation === "split" ? incomingFiles.slice(0, 1) : incomingFiles;
 
     setSelectedFiles(normalizedFiles);
     setStatus(null);
 
-    const firstExtension = getExtension(normalizedFiles[0].name);
-    const nextTargets = CONVERSION_TARGETS[firstExtension] || [];
-    setTargetFormat(nextTargets[0] || "");
+    if (operation === "merge") {
+      setTargetFormat("pdf");
+      return;
+    }
+
+    if (operation === "convert") {
+      const targetSets = normalizedFiles.map(
+        (file) => CONVERSION_TARGETS[getExtension(file.name)] || [],
+      );
+
+      if (targetSets.some((set) => set.length === 0)) {
+        setTargetFormat("");
+        return;
+      }
+
+      const intersection = targetSets.reduce((accumulator, currentSet) =>
+        accumulator.filter((value) => currentSet.includes(value)),
+      );
+      setTargetFormat(intersection[0] || "");
+    }
   }
 
   function onDrop(event) {
@@ -184,51 +241,42 @@ function HomePage() {
     onPickFiles(event.dataTransfer.files);
   }
 
-  function onOperationChange(nextOperation) {
-    setOperation(nextOperation);
-    setStatus(null);
-
-    if (nextOperation !== "merge" && selectedFiles.length > 1) {
-      const firstFile = selectedFiles[0];
-      setSelectedFiles([firstFile]);
-      const nextTargets =
-        CONVERSION_TARGETS[getExtension(firstFile.name)] || [];
-      setTargetFormat(nextTargets[0] || "");
-    }
-  }
-
   async function handleSubmit() {
     if (selectedFiles.length === 0) {
-      setFailure("Unsupported file", "Please upload a file first");
+      setFailure("Unsupported file", "Please upload file(s) first");
       return;
     }
 
     if (operation === "merge") {
       if (selectedFiles.length < 2) {
-        setFailure("Unsupported file", "Merge requires at least two PDF files");
+        setFailure("Unsupported file", "Merge requires at least two files");
         return;
       }
 
-      const allPdf = selectedFiles.every(
-        (file) => getExtension(file.name) === ".pdf",
-      );
-      if (!allPdf) {
-        setFailure("Unsupported file", "Merge supports PDF files only");
+      if (!["pdf", "docx"].includes((targetFormat || "").toLowerCase())) {
+        setFailure("Unsupported file", "Merge output must be PDF or DOCX");
         return;
       }
     }
 
-    if (operation === "split" && primaryExtension !== ".pdf") {
-      setFailure("Unsupported file", "Split supports PDF files only");
-      return;
+    if (operation === "split") {
+      if (
+        selectedFiles.length !== 1 ||
+        getExtension(selectedFiles[0].name) !== ".pdf"
+      ) {
+        setFailure("Unsupported file", "Split requires exactly one PDF file");
+        return;
+      }
     }
 
-    if (operation === "convert" && availableTargets.length === 0) {
-      setFailure(
-        "Unsupported file",
-        "No conversion target available for this file",
-      );
-      return;
+    if (operation === "convert") {
+      if (!targetFormat) {
+        setFailure(
+          "Unsupported file",
+          "No valid conversion target for selected files",
+        );
+        return;
+      }
     }
 
     setIsProcessing(true);
@@ -238,7 +286,7 @@ function HomePage() {
       const formData = new FormData();
       formData.append("operation", operation);
 
-      if (operation === "convert") {
+      if (operation === "convert" || operation === "merge") {
         formData.append("targetFormat", targetFormat);
       }
 
@@ -246,13 +294,9 @@ function HomePage() {
         formData.append("pageRanges", pageRanges.trim());
       }
 
-      if (operation === "merge") {
-        selectedFiles.forEach((file) => {
-          formData.append("files", file);
-        });
-      } else {
-        formData.append("file", selectedFiles[0]);
-      }
+      selectedFiles.forEach((file) => {
+        formData.append("files", file);
+      });
 
       const response = await fetch(buildEndpoint("/process"), {
         method: "POST",
@@ -263,7 +307,7 @@ function HomePage() {
       try {
         payload = await response.json();
       } catch {
-        // Fallback handled below.
+        payload = {};
       }
 
       if (!response.ok || payload.status === "failed") {
@@ -274,18 +318,17 @@ function HomePage() {
         return;
       }
 
-      const downloadUrl = payload.downloadUrl
-        ? buildEndpoint(payload.downloadUrl)
-        : buildEndpoint(`/download/${payload.downloadId}`);
-
       setStatus({
         kind: "success",
-        message: payload.message || "File processed successfully",
-        reason: payload.detectedType
-          ? `Detected type: ${payload.detectedType}`
+        message: payload.message || "Files processed successfully",
+        reason:
+          payload.results?.length > 0
+            ? `${payload.results.length} output file(s) ready`
+            : "",
+        results: payload.results || [],
+        batchDownloadUrl: payload.batchDownloadUrl
+          ? buildEndpoint(payload.batchDownloadUrl)
           : "",
-        downloadUrl,
-        downloadName: payload.downloadName,
       });
     } catch (error) {
       setFailure("Processing failed", error.message || "Network error");
@@ -307,7 +350,7 @@ function HomePage() {
                 FileUnlocker
               </p>
               <h1 className="mt-1 font-display text-xl font-bold sm:text-2xl">
-                Document Toolkit
+                Batch File Operations
               </h1>
             </div>
             <p className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white/90">
@@ -330,11 +373,12 @@ function HomePage() {
                     onMouseLeave={() => setHoveredOperation("")}
                     onFocus={() => setHoveredOperation(item.value)}
                     onBlur={() => setHoveredOperation("")}
-                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition ${
-                      isActive
+                    className={
+                      "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition " +
+                      (isActive
                         ? "border-white bg-white text-tide"
-                        : "border-white/30 bg-white/10 text-white hover:border-white/70 hover:bg-white/20"
-                    }`}
+                        : "border-white/30 bg-white/10 text-white hover:border-white/70 hover:bg-white/20")
+                    }
                     title={item.help}
                   >
                     <Icon className="h-4 w-4" />
@@ -372,24 +416,25 @@ function HomePage() {
               onDragLeave={() => setDragActive(false)}
               onDrop={onDrop}
               onClick={() => fileInputRef.current?.click()}
-              className={`cursor-pointer rounded-2xl border-2 border-dashed p-8 text-center transition-all ${
-                dragActive
+              className={
+                "cursor-pointer rounded-2xl border-2 border-dashed p-8 text-center transition-all " +
+                (dragActive
                   ? "border-coral bg-coral/10"
-                  : "border-lagoon/45 bg-white hover:border-lagoon hover:bg-foam/40"
-              }`}
+                  : "border-lagoon/45 bg-white hover:border-lagoon hover:bg-foam/40")
+              }
             >
               <input
                 ref={fileInputRef}
                 type="file"
-                multiple={operation === "merge"}
+                multiple={operation !== "split"}
                 className="hidden"
                 onChange={(event) => onPickFiles(event.target.files)}
               />
               <UploadCloud className="mx-auto h-12 w-12 text-lagoon" />
               <p className="mt-4 font-display text-xl font-semibold text-ink">
-                {operation === "merge"
-                  ? "Drop multiple PDF files, or click to select"
-                  : "Drag and drop your file, or click to upload"}
+                {operation === "split"
+                  ? "Drop one PDF file, or click to upload"
+                  : "Drag and drop file(s), or click to upload"}
               </p>
               <p className="mt-2 text-sm text-ink/65">
                 Supported: PDF, DOCX, PPTX, XLSX, JPG, PNG, ZIP (max 50MB each)
@@ -430,22 +475,37 @@ function HomePage() {
                 <select
                   value={targetFormat}
                   onChange={(event) => setTargetFormat(event.target.value)}
-                  disabled={availableTargets.length === 0}
+                  disabled={convertTargetOptions.length === 0}
                   className="mt-2 w-full rounded-xl border border-lagoon/30 bg-white px-3 py-3 text-sm text-ink outline-none transition focus:border-coral disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {availableTargets.length === 0 && (
+                  {convertTargetOptions.length === 0 && (
                     <option value="">Not available</option>
                   )}
-                  {availableTargets.map((target) => (
+                  {convertTargetOptions.map((target) => (
                     <option key={target} value={target}>
                       .{target}
                     </option>
                   ))}
                 </select>
-                <p className="mt-2 text-xs text-ink/65">
-                  Includes PDF to Word, PPT to Word, and other common office
-                  conversions.
+              </section>
+            )}
+
+            {operation === "merge" && (
+              <section className="rounded-2xl border border-lagoon/20 bg-white/85 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ink/60">
+                  Merge Output Format
                 </p>
+                <select
+                  value={targetFormat}
+                  onChange={(event) => setTargetFormat(event.target.value)}
+                  className="mt-2 w-full rounded-xl border border-lagoon/30 bg-white px-3 py-3 text-sm text-ink outline-none transition focus:border-coral"
+                >
+                  {MERGE_TARGETS.map((target) => (
+                    <option key={target} value={target}>
+                      .{target}
+                    </option>
+                  ))}
+                </select>
               </section>
             )}
 
@@ -467,15 +527,6 @@ function HomePage() {
               </section>
             )}
 
-            {operation === "merge" && (
-              <section className="rounded-2xl border border-lagoon/20 bg-white/85 p-4">
-                <p className="text-sm text-ink/80">
-                  Merge requires at least two PDF files and returns one merged
-                  PDF.
-                </p>
-              </section>
-            )}
-
             <button
               type="button"
               onClick={handleSubmit}
@@ -490,18 +541,19 @@ function HomePage() {
               ) : (
                 <>
                   <WandSparkles className="h-5 w-5" />
-                  Process File
+                  Process Files
                 </>
               )}
             </button>
 
             {status && (
               <section
-                className={`rounded-2xl border p-4 ${
-                  status.kind === "success"
+                className={
+                  "rounded-2xl border p-4 " +
+                  (status.kind === "success"
                     ? "border-emerald-300 bg-emerald-50"
-                    : "border-rose-300 bg-rose-50"
-                }`}
+                    : "border-rose-300 bg-rose-50")
+                }
               >
                 <div className="flex items-start gap-3">
                   {status.kind === "success" ? (
@@ -519,15 +571,43 @@ function HomePage() {
                   </div>
                 </div>
 
-                {status.kind === "success" && status.downloadUrl && (
+                {status.kind === "success" && status.batchDownloadUrl && (
                   <a
-                    href={status.downloadUrl}
-                    download={status.downloadName}
-                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500"
+                    href={status.batchDownloadUrl}
+                    download
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-tide px-4 py-2 text-sm font-semibold text-white transition hover:bg-tide/90"
                   >
                     <Download className="h-4 w-4" />
-                    Download Processed File
+                    Download All
                   </a>
+                )}
+
+                {status.kind === "success" && status.results?.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {status.results.map((item) => (
+                      <div
+                        key={item.downloadId}
+                        className="flex items-center justify-between rounded-lg border border-emerald-200 bg-white/70 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-ink">
+                            {item.downloadName}
+                          </p>
+                          <p className="text-[11px] text-ink/65">
+                            {item.message}
+                          </p>
+                        </div>
+                        <a
+                          href={buildEndpoint(item.downloadUrl)}
+                          download={item.downloadName}
+                          className="ml-3 inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
+                        >
+                          <Download className="h-3 w-3" />
+                          Download
+                        </a>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </section>
             )}

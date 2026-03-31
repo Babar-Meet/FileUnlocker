@@ -12,8 +12,8 @@ const router = express.Router();
 const processingQueue = new AsyncTaskQueue(2);
 
 const processUploadMiddleware = upload.fields([
-  { name: "file", maxCount: 1 },
-  { name: "files", maxCount: 30 },
+  { name: "file", maxCount: 10 },
+  { name: "files", maxCount: 200 },
 ]);
 
 router.post("/process", processUploadMiddleware, async (req, res, next) => {
@@ -23,11 +23,11 @@ router.post("/process", processUploadMiddleware, async (req, res, next) => {
     const pageRanges = req.body.pageRanges || "";
 
     const groupedFiles = req.files || {};
-    const primaryFile = groupedFiles.file?.[0] || groupedFiles.files?.[0] || null;
     const inputFiles = [
-      ...(groupedFiles.file || []),
       ...(groupedFiles.files || []),
+      ...(groupedFiles.file || []),
     ];
+    const primaryFile = inputFiles[0] || null;
 
     const result = await processingQueue.add(() =>
       processUploadedFile(primaryFile, {
@@ -38,10 +38,7 @@ router.post("/process", processUploadMiddleware, async (req, res, next) => {
       }),
     );
 
-    res.status(200).json({
-      ...result,
-      downloadUrl: `/download/${result.downloadId}`,
-    });
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }

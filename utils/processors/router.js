@@ -1,3 +1,4 @@
+import path from "node:path";
 import fs from "fs-extra";
 import mime from "mime-types";
 import { AppError } from "../errors.js";
@@ -19,14 +20,46 @@ import { unlockPdfRestrictions } from "./pdfProcessor.js";
 import { mergePdfFiles, splitPdfByRanges } from "./mergeSplitProcessor.js";
 import { runOcrExtraction } from "./ocrProcessor.js";
 
-function createOutputPath(outputBasePath, extension) {
-  return `${outputBasePath}${extension}`;
-}
-
 function unsupportedFile(
   reason = "This operation is not available for this file type",
 ) {
   return new AppError("Unsupported file", "UNSUPPORTED_FILE", 400, { reason });
+}
+
+function sanitizeBaseName(name) {
+  const raw = (name || "file").trim();
+  const safe = raw.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "");
+  return safe || "file";
+}
+
+function createOutputPath(outputBasePath, extension) {
+  return `${outputBasePath}${extension}`;
+}
+
+function createPerFileOutputBase(outputBasePath, index, sourceName) {
+  const base = sanitizeBaseName(
+    path.parse(sourceName || `file_${index + 1}`).name,
+  );
+  return `${outputBasePath}_${index + 1}_${base}`;
+}
+
+function createDescriptor({
+  outputPath,
+  outputExtension,
+  sourceName,
+  outputName,
+  detectedType,
+  message,
+}) {
+  return {
+    outputPath,
+    outputExtension,
+    sourceName,
+    outputName,
+    detectedType,
+    message,
+    mimeType: mime.lookup(outputExtension) || "application/octet-stream",
+  };
 }
 
 async function ensureOutputExists(outputPath) {
@@ -63,9 +96,7 @@ async function unlockByType({ fileType, inputPath, outputPath, qpdfBin }) {
     return "ZIP validated and rebuilt successfully.";
   }
 
-  throw unsupportedFile(
-    "Unlock is supported for PDF, DOCX, PPTX, XLSX, and ZIP files",
-  );
+  throw unsupportedFile("Unlock supports PDF, DOCX, PPTX, XLSX, and ZIP.");
 }
 
 async function convertByType({
@@ -99,70 +130,101 @@ async function convertByType({
   return "File converted successfully.";
 }
 
-async function mergeByType({ inputFiles, outputPath }) {
-  if (!Array.isArray(inputFiles) || inputFiles.length < 2) {
-    throw unsupportedFile("Merge requires at least two files");
-  }
-
-  const validatedFiles = inputFiles.map((file) => {
-    const fileType = detectFileType(file.originalName, file.mimeType);
-    if (!fileType) {
-      throw unsupportedFile(
-        "Merge only supports PDF files that pass MIME and extension checks",
-      );
-    }
-
-    if (fileType.extension !== ".pdf") {
-      throw unsupportedFile("Merge currently supports PDF files only");
-    }
-
-    return file;
-  });
-
-  await mergePdfFiles({
-    inputFiles: validatedFiles.map((file) => ({
-      path: file.path,
-      originalName: file.originalName,
-    })),
-    outputPath,
-  });
-
-  return "PDF files merged successfully.";
-}
-
-async function splitByType({ fileType, inputPath, outputPath, pageRanges }) {
-  if (fileType.extension !== ".pdf") {
-    throw unsupportedFile("Split currently supports PDF files only");
-  }
-
-  await splitPdfByRanges({
-    inputPath,
-    outputPath,
-    pageRanges,
-  });
-
-  return "PDF pages split successfully. Download includes a ZIP package.";
-}
-
 async function ocrByType({ fileType, inputPath, outputPath }) {
   await runOcrExtraction({
     inputPath,
     extension: fileType.extension,
     outputPath,
   });
+  return "OCR/text extraction completed.";
+}
 
-  return "OCR/text extraction completed. Download the TXT output.";
+async function toPdfForMerge({ file, index, workDir, libreOfficeBin }) {
+  const fileType = detectFileType(file.originalName, file.mimeType);
+  if (!fileType) {
+    throw unsupportedFile(`Unsupported merge input: ${file.originalName}`);
+  }
+
+  if (fileType.extension === ".zip") {
+    throw unsupportedFile("ZIP files are not supported for merge.");
+  }
+
+  const tempPdfPath = path.join(workDir, `merge_input_${index + 1}.pdf`);
+
+  if (fileType.extension === ".pdf") {
+    await fs.copy(file.path, tempPdfPath, { overwrite: true });
+    return tempPdfPath;
+  }
+
+  if (fileType.kind === "image") {
+    await convertImageToPdf({ inputPath: file.path, outputPath: tempPdfPath });
+    return tempPdfPath;
+  }
+
+  await convertWithLibreOffice({
+    inputPath: file.path,
+    targetFormat: "pdf",
+    outputPath: tempPdfPath,
+    libreOfficeBin,
+  });
+
+  return tempPdfPath;
+}
+
+async function mergeByType({
+  inputFiles,
+  outputPath,
+  mergeTargetFormat,
+  workDir,
+  libreOfficeBin,
+}) {
+  if (!Array.isArray(inputFiles) || inputFiles.length < 2) {
+    throw unsupportedFile("Merge requires at least two files.");
+  }
+
+  const mergeTarget = normalizeTargetFormat(mergeTargetFormat) || "pdf";
+  if (!["pdf", "docx"].includes(mergeTarget)) {
+    throw unsupportedFile("Merge output format must be PDF or DOCX.");
+  }
+
+  const convertedPdfInputs = [];
+  for (let index = 0; index < inputFiles.length; index += 1) {
+    const pdfPath = await toPdfForMerge({
+      file: inputFiles[index],
+      index,
+      workDir,
+      libreOfficeBin,
+    });
+    convertedPdfInputs.push({ path: pdfPath });
+  }
+
+  const mergedPdfPath = path.join(workDir, "merged_result.pdf");
+  await mergePdfFiles({
+    inputFiles: convertedPdfInputs,
+    outputPath: mergedPdfPath,
+  });
+
+  if (mergeTarget === "pdf") {
+    await fs.copy(mergedPdfPath, outputPath, { overwrite: true });
+    return "Files merged into one PDF successfully.";
+  }
+
+  await convertWithLibreOffice({
+    inputPath: mergedPdfPath,
+    targetFormat: "docx",
+    outputPath,
+    libreOfficeBin,
+  });
+  return "Files merged and exported as DOCX successfully.";
 }
 
 export async function processFile({
-  inputPath,
-  originalName,
-  mimeType,
   operation,
   targetFormat,
   pageRanges,
   inputFiles = [],
   outputBasePath,
+  workDir,
   qpdfBin,
   libreOfficeBin,
 }) {
@@ -171,94 +233,175 @@ export async function processFile({
     throw unsupportedFile("Unsupported operation mode");
   }
 
+  const files = (inputFiles || []).filter(Boolean);
+  if (files.length === 0) {
+    throw unsupportedFile("Please upload at least one file.");
+  }
+
   if (normalizedOperation === "merge") {
-    const outputExtension = ".pdf";
+    const mergeTarget = normalizeTargetFormat(targetFormat) || "pdf";
+    const outputExtension = mergeTarget === "docx" ? ".docx" : ".pdf";
     const outputPath = createOutputPath(outputBasePath, outputExtension);
 
     const message = await mergeByType({
-      inputFiles,
+      inputFiles: files,
       outputPath,
+      mergeTargetFormat: mergeTarget,
+      workDir,
+      libreOfficeBin,
     });
-
     await ensureOutputExists(outputPath);
 
     return {
-      outputPath,
-      outputExtension,
       message,
-      detectedType: "PDF",
-      mimeType: mime.lookup(outputExtension) || "application/octet-stream",
+      outputs: [
+        createDescriptor({
+          outputPath,
+          outputExtension,
+          sourceName: "merged_files",
+          outputName: `merged_files_processed${outputExtension}`,
+          detectedType: outputExtension.slice(1).toUpperCase(),
+          message,
+        }),
+      ],
     };
   }
 
-  const fileType = detectFileType(originalName, mimeType);
-  if (!fileType) {
-    throw unsupportedFile(
-      "Only PDF, DOCX, PPTX, XLSX, JPG, PNG, and ZIP are supported",
-    );
-  }
-
-  let outputExtension = fileType.extension;
-  let outputPath = createOutputPath(outputBasePath, outputExtension);
-  let message = "File processed successfully.";
-
-  if (normalizedOperation === "convert") {
-    const normalizedTarget = normalizeTargetFormat(targetFormat);
-    if (!normalizedTarget) {
-      throw unsupportedFile("A target format is required for convert mode");
+  if (normalizedOperation === "split") {
+    if (files.length !== 1) {
+      throw unsupportedFile("Split requires exactly one PDF file.");
     }
 
-    outputExtension = `.${normalizedTarget}`;
-    outputPath = createOutputPath(outputBasePath, outputExtension);
+    const file = files[0];
+    const fileType = detectFileType(file.originalName, file.mimeType);
+    if (!fileType || fileType.extension !== ".pdf") {
+      throw unsupportedFile("Split supports PDF files only.");
+    }
 
-    message = await convertByType({
-      fileType,
-      inputPath,
-      outputPath,
-      targetFormat: normalizedTarget,
-      libreOfficeBin,
-    });
-  }
-
-  if (normalizedOperation === "unlock") {
-    message = await unlockByType({
-      fileType,
-      inputPath,
-      outputPath,
-      qpdfBin,
-    });
-  }
-
-  if (normalizedOperation === "split") {
-    outputExtension = ".zip";
-    outputPath = createOutputPath(outputBasePath, outputExtension);
-
-    message = await splitByType({
-      fileType,
-      inputPath,
-      outputPath,
+    const outputDir = path.dirname(outputBasePath);
+    const outputPrefix = sanitizeBaseName(path.parse(file.originalName).name);
+    const splitOutputs = await splitPdfByRanges({
+      inputPath: file.path,
+      outputDir,
+      outputPrefix,
       pageRanges,
     });
+
+    const outputs = [];
+    for (const part of splitOutputs) {
+      await ensureOutputExists(part.outputPath);
+      outputs.push(
+        createDescriptor({
+          outputPath: part.outputPath,
+          outputExtension: ".pdf",
+          sourceName: path.parse(part.outputName).name,
+          outputName: part.outputName,
+          detectedType: "PDF",
+          message: "Split part generated.",
+        }),
+      );
+    }
+
+    return {
+      message: `Split completed with ${outputs.length} output file(s).`,
+      outputs,
+    };
   }
 
-  if (normalizedOperation === "ocr") {
-    outputExtension = ".txt";
-    outputPath = createOutputPath(outputBasePath, outputExtension);
+  const outputs = [];
 
-    message = await ocrByType({
-      fileType,
-      inputPath,
-      outputPath,
-    });
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const fileType = detectFileType(file.originalName, file.mimeType);
+    if (!fileType) {
+      throw unsupportedFile(`Unsupported file: ${file.originalName}`);
+    }
+
+    const perFileBase = createPerFileOutputBase(
+      outputBasePath,
+      index,
+      file.originalName,
+    );
+
+    if (normalizedOperation === "unlock") {
+      const outputExtension = fileType.extension;
+      const outputPath = createOutputPath(perFileBase, outputExtension);
+      const message = await unlockByType({
+        fileType,
+        inputPath: file.path,
+        outputPath,
+        qpdfBin,
+      });
+      await ensureOutputExists(outputPath);
+
+      outputs.push(
+        createDescriptor({
+          outputPath,
+          outputExtension,
+          sourceName: file.originalName,
+          detectedType: fileType.extension.slice(1).toUpperCase(),
+          message,
+        }),
+      );
+      continue;
+    }
+
+    if (normalizedOperation === "convert") {
+      const normalizedTarget = normalizeTargetFormat(targetFormat);
+      if (!normalizedTarget) {
+        throw unsupportedFile("A target format is required for convert mode.");
+      }
+
+      const outputExtension = `.${normalizedTarget}`;
+      const outputPath = createOutputPath(perFileBase, outputExtension);
+      const message = await convertByType({
+        fileType,
+        inputPath: file.path,
+        outputPath,
+        targetFormat: normalizedTarget,
+        libreOfficeBin,
+      });
+      await ensureOutputExists(outputPath);
+
+      outputs.push(
+        createDescriptor({
+          outputPath,
+          outputExtension,
+          sourceName: file.originalName,
+          detectedType: outputExtension.slice(1).toUpperCase(),
+          message,
+        }),
+      );
+      continue;
+    }
+
+    if (normalizedOperation === "ocr") {
+      const outputExtension = ".txt";
+      const outputPath = createOutputPath(perFileBase, outputExtension);
+      const message = await ocrByType({
+        fileType,
+        inputPath: file.path,
+        outputPath,
+      });
+      await ensureOutputExists(outputPath);
+
+      outputs.push(
+        createDescriptor({
+          outputPath,
+          outputExtension,
+          sourceName: file.originalName,
+          detectedType: "TXT",
+          message,
+        }),
+      );
+      continue;
+    }
+
+    throw unsupportedFile("Unsupported operation mode");
   }
-
-  await ensureOutputExists(outputPath);
 
   return {
-    outputPath,
-    outputExtension,
-    message,
-    detectedType: fileType.extension.slice(1).toUpperCase(),
-    mimeType: mime.lookup(outputExtension) || "application/octet-stream",
+    message: `Processed ${outputs.length} file(s) successfully.`,
+    outputs,
   };
 }
