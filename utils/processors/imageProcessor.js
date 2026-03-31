@@ -48,6 +48,59 @@ export async function repairImage({ inputPath, outputPath }) {
   await pipeline.jpeg({ quality: 90, mozjpeg: true }).toFile(outputPath);
 }
 
+export async function convertImageToFormat({
+  inputPath,
+  outputPath,
+  targetFormat,
+}) {
+  await getImageMetadata(inputPath);
+  const normalizedTarget = (targetFormat || "").toLowerCase();
+  const pipeline = sharp(inputPath).rotate();
+
+  try {
+    if (normalizedTarget === "jpg" || normalizedTarget === "jpeg") {
+      await pipeline.jpeg({ quality: 88, mozjpeg: true }).toFile(outputPath);
+      return;
+    }
+
+    if (normalizedTarget === "png") {
+      await pipeline
+        .png({ compressionLevel: 9, palette: true })
+        .toFile(outputPath);
+      return;
+    }
+
+    if (normalizedTarget === "webp") {
+      await pipeline.webp({ quality: 85 }).toFile(outputPath);
+      return;
+    }
+
+    if (normalizedTarget === "avif") {
+      await pipeline.avif({ quality: 55 }).toFile(outputPath);
+      return;
+    }
+
+    if (normalizedTarget === "tiff") {
+      await pipeline
+        .tiff({ compression: "lzw", quality: 85 })
+        .toFile(outputPath);
+      return;
+    }
+
+    throw new AppError("Unsupported file", "UNSUPPORTED_FILE", 400, {
+      reason: "Unsupported image conversion target",
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+
+    throw new AppError("Processing failed", "PROCESSING_FAILED", 500, {
+      reason: parseReason(error),
+    });
+  }
+}
+
 export async function convertImageToPdf({ inputPath, outputPath }) {
   const metadata = await getImageMetadata(inputPath);
   const imageBuffer = await fs.readFile(inputPath);

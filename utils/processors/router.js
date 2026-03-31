@@ -20,6 +20,7 @@ import {
   unlockXlsxSheetProtection,
 } from "./excelProcessor.js";
 import {
+  convertImageToFormat,
   convertImageToPdf,
   optimizeImage,
   repairImage,
@@ -158,9 +159,14 @@ async function convertByType({
     throw unsupportedFile("Unsupported conversion pair for this file type");
   }
 
-  if (fileType.kind === "image" && targetFormat === "pdf") {
-    await convertImageToPdf({ inputPath, outputPath });
-    return "Image converted to PDF.";
+  if (fileType.kind === "image") {
+    if (targetFormat === "pdf") {
+      await convertImageToPdf({ inputPath, outputPath });
+      return "Image converted to PDF.";
+    }
+
+    await convertImageToFormat({ inputPath, outputPath, targetFormat });
+    return `Image converted to ${targetFormat.toUpperCase()}.`;
   }
 
   await convertWithLibreOffice({

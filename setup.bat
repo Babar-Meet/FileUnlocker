@@ -15,10 +15,18 @@ if %ERRORLEVEL% neq 0 (
 
 echo [1/4] Installing root dependencies...
 call npm install
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] npm install failed.
+    goto :failed
+)
 
 echo [2/4] Setting up server environment...
 if not exist "server\.env" (
     copy "server\.env.example" "server\.env"
+    if %ERRORLEVEL% neq 0 (
+        echo [ERROR] Failed to create server/.env from template.
+        goto :failed
+    )
     echo Created default server/.env file.
 ) else (
     echo server/.env already exists.
@@ -47,3 +55,12 @@ echo Setup Complete!
 echo You can now use 'start.bat' to run the app.
 echo ==========================================
 pause
+exit /b 0
+
+:failed
+echo ==========================================
+echo Setup Failed.
+echo Please fix the above error and run setup again.
+echo ==========================================
+pause
+exit /b 1

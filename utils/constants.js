@@ -40,13 +40,13 @@ export const FILE_KIND_BY_EXTENSION = {
 };
 
 export const CONVERSION_TARGETS = {
-  ".pdf": ["docx"],
-  ".docx": ["pdf"],
-  ".pptx": ["pdf"],
-  ".xlsx": ["pdf"],
-  ".jpg": ["pdf"],
-  ".jpeg": ["pdf"],
-  ".png": ["pdf"],
+  ".pdf": ["docx", "odt", "rtf", "txt", "html"],
+  ".docx": ["pdf", "odt", "rtf", "txt", "html", "doc", "epub"],
+  ".pptx": ["pdf", "odp", "ppt", "html", "txt"],
+  ".xlsx": ["pdf", "ods", "xls", "csv", "html"],
+  ".jpg": ["pdf", "png", "webp", "avif", "tiff"],
+  ".jpeg": ["pdf", "png", "webp", "avif", "tiff"],
+  ".png": ["pdf", "jpg", "jpeg", "webp", "avif", "tiff"],
 };
 
 export const OPERATION_MODES = new Set([

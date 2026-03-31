@@ -3,12 +3,18 @@ echo ==========================================
 echo Starting FileUnlocker...
 echo ==========================================
 
-:: Start the application in a new terminal window or directly
+echo [INFO] Building frontend...
+call npm run build -w client
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Frontend build failed.
+    pause
+    exit /b %ERRORLEVEL%
+)
+
+:: Start the application in development mode
 echo [INFO] Starting Backend and Frontend...
 echo [INFO] Access via http://localhost:5173
 
-:: Use concurrently, or if not in dev, start them manually.
-:: For convenience, running npm run dev from root.
 call npm run dev
 
 if %ERRORLEVEL% neq 0 (
